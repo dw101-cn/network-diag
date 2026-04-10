@@ -17,7 +17,7 @@ import (
 	"time"
 )
 
-const version = "0.2.0"
+const version = "0.2.1"
 
 var output io.Writer = os.Stdout
 
@@ -564,6 +564,10 @@ func checkGitSetup() {
 			printf("  [EMPTY] git config --global %s\n", key)
 		} else {
 			printf("  [SET]   git config --global %s = %s\n", key, val)
+			// Collect proxy from git config for later testing
+			if key == "http.proxy" || key == "https.proxy" {
+				addProxy(val)
+			}
 		}
 	}
 
@@ -644,45 +648,66 @@ func checkGitOperations() {
 	testRepo := "https://github.com/dw101-cn/network-diag.git"
 	testRepoSSH := "git@github.com:dw101-cn/network-diag.git"
 
-	// HTTPS direct
-	subsection("git ls-remote (HTTPS direct)")
+	// HTTPS using current git config (may have proxy configured)
+	subsection("git ls-remote (HTTPS, using git config)")
 	out, err := runCmd(20*time.Second, "git", "ls-remote", "--heads", testRepo)
 	if err != nil {
 		printf("  [FAIL] %v\n", truncate(strings.TrimSpace(out+err.Error()), 200))
 	} else {
-		println("  [OK]   HTTPS direct works!")
+		println("  [OK]   HTTPS works (with current git config)!")
 		gitHTTPSDirectOK = true
 		printLsRemoteResult(out)
 	}
 
-	// HTTPS via proxy
-	if !gitHTTPSDirectOK && workingProxy != "" {
-		subsection(fmt.Sprintf("git ls-remote (HTTPS via proxy %s)", workingProxy))
-
-		// With TLS verify
-		out, err := runCmd(20*time.Second, "git",
-			"-c", "http.proxy="+workingProxy,
+	// If git config HTTPS failed, try with sslVerify=false (cert issue?)
+	if !gitHTTPSDirectOK {
+		subsection("git ls-remote (HTTPS, sslVerify=false)")
+		out, err = runCmd(20*time.Second, "git",
+			"-c", "http.sslVerify=false",
 			"ls-remote", "--heads", testRepo)
 		if err != nil {
+			printf("  [FAIL] %v\n", truncate(strings.TrimSpace(out+err.Error()), 200))
+		} else {
+			println("  [OK]   HTTPS works with sslVerify=false!")
+			println("         -> Proxy works but needs correct CA certificate")
+			gitHTTPSProxyOK = true
+			needCustomCert = true
+			printLsRemoteResult(out)
+		}
+	}
+
+	// If still failing, try each discovered proxy explicitly
+	if !gitHTTPSDirectOK && !gitHTTPSProxyOK {
+		for _, p := range foundProxies {
+			subsection(fmt.Sprintf("git ls-remote (HTTPS via proxy %s)", p))
+
+			// With TLS verify
+			out, err := runCmd(20*time.Second, "git",
+				"-c", "http.proxy="+p,
+				"ls-remote", "--heads", testRepo)
+			if err == nil {
+				printf("  [OK]   Proxy %s works!\n", p)
+				gitHTTPSProxyOK = true
+				workingProxy = p
+				printLsRemoteResult(out)
+				break
+			}
 			printf("  [FAIL] With TLS verify: %v\n", truncate(strings.TrimSpace(out+err.Error()), 200))
 
 			// Without TLS verify
 			out, err = runCmd(20*time.Second, "git",
-				"-c", "http.proxy="+workingProxy,
+				"-c", "http.proxy="+p,
 				"-c", "http.sslVerify=false",
 				"ls-remote", "--heads", testRepo)
-			if err != nil {
-				printf("  [FAIL] Without TLS verify: %v\n", truncate(strings.TrimSpace(out+err.Error()), 200))
-			} else {
-				println("  [OK]   HTTPS via proxy works (TLS verify disabled)")
+			if err == nil {
+				printf("  [OK]   Proxy %s works (needs CA cert)\n", p)
 				gitHTTPSProxyOK = true
+				workingProxy = p
 				needCustomCert = true
 				printLsRemoteResult(out)
+				break
 			}
-		} else {
-			println("  [OK]   HTTPS via proxy works!")
-			gitHTTPSProxyOK = true
-			printLsRemoteResult(out)
+			printf("  [FAIL] Without TLS verify: %v\n", truncate(strings.TrimSpace(out+err.Error()), 200))
 		}
 	}
 
@@ -802,6 +827,9 @@ func printSummary() {
 	printf("  %-30s %s\n", "HTTPS Via Proxy:", boolStatus(httpsViaProxyOK))
 	printf("  %-30s %s\n", "TLS Direct:", boolStatus(tlsDirectOK))
 	printf("  %-30s %s\n", "Zscaler Detected:", boolYesNo(zscalerDetected))
+	if len(foundProxies) > 0 {
+		printf("  %-30s %s\n", "Discovered Proxies:", strings.Join(foundProxies, ", "))
+	}
 	if gitInstalled {
 		printf("  %-30s %s\n", "Git HTTPS Direct:", boolStatus(gitHTTPSDirectOK))
 		printf("  %-30s %s\n", "Git HTTPS Via Proxy:", boolStatus(gitHTTPSProxyOK))
@@ -892,14 +920,32 @@ func printSummary() {
 		return
 	}
 
-	// Nothing works
-	println("  [!] No working connection method found.")
-	println("")
-	println("  Possible actions:")
-	println("    1. Ask IT to whitelist github.com in the firewall/proxy")
-	println("    2. Ask IT for the correct proxy address for CLI tools")
-	println("    3. If Zscaler is in use, ask IT for the Zscaler proxy address")
-	printf("       (PAC file may not contain usable proxy for CLI)\n")
+	// Check if there's a configured proxy that didn't work
+	if len(foundProxies) > 0 {
+		println("  [!] Proxy is configured but cannot reach GitHub.")
+		printf("\n")
+		println("  Possible causes:")
+		println("    1. The proxy address may be wrong or unreachable")
+		println("    2. The proxy requires Zscaler client (ZApp) to be running")
+		println("    3. The proxy requires authentication")
+		printf("\n")
+		println("  Try these commands manually:")
+		for _, p := range foundProxies {
+			printf("    git -c http.proxy=%s -c http.sslVerify=false ls-remote https://github.com/dw101-cn/network-diag.git\n", p)
+		}
+		printf("\n")
+		println("  If none work, ask IT for:")
+		println("    - The correct proxy address for CLI/terminal tools")
+		println("    - Whether Zscaler client needs to be installed")
+		println("    - Firewall whitelist for github.com")
+	} else {
+		println("  [!] No working connection method found.")
+		printf("\n")
+		println("  Possible actions:")
+		println("    1. Ask IT for the proxy address for CLI tools")
+		println("    2. Ask IT to whitelist github.com in the firewall")
+		println("    3. Check if Zscaler or VPN client needs to be running")
+	}
 	printf("\n")
 }
 
