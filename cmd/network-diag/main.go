@@ -13,16 +13,30 @@ import (
 	"time"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
+
+// output is the writer used by all print functions.
+// It writes to both stdout and the log file.
+var output io.Writer = os.Stdout
 
 func main() {
-	fmt.Println("========================================")
-	fmt.Printf("  network-diag v%s\n", version)
-	fmt.Println("  Network Diagnostic Tool")
-	fmt.Println("========================================")
-	fmt.Printf("Time:     %s\n", time.Now().Format(time.RFC3339))
-	fmt.Printf("OS/Arch:  %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Println()
+	// Create log file with timestamp
+	filename := fmt.Sprintf("network-diag_%s.txt", time.Now().Format("20060102_150405"))
+	logFile, err := os.Create(filename)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: cannot create log file: %v\n", err)
+	} else {
+		defer logFile.Close()
+		output = io.MultiWriter(os.Stdout, logFile)
+	}
+
+	printf("========================================\n")
+	printf("  network-diag v%s\n", version)
+	printf("  Network Diagnostic Tool\n")
+	printf("========================================\n")
+	printf("Time:     %s\n", time.Now().Format(time.RFC3339))
+	printf("OS/Arch:  %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	printf("\n")
 
 	checkProxyEnv()
 	checkDNS()
@@ -31,14 +45,23 @@ func main() {
 	checkTLSCert()
 	checkGitProtocol()
 
-	fmt.Println()
-	fmt.Println("========================================")
-	fmt.Println("  Diagnostic complete.")
-	fmt.Println("========================================")
-	fmt.Println()
-	fmt.Println("Please copy all output above and share it for further analysis.")
+	printf("\n")
+	printf("========================================\n")
+	printf("  Diagnostic complete.\n")
+	printf("========================================\n")
+	printf("\n")
+	printf("Results saved to: %s\n", filename)
+	printf("\n")
 	fmt.Println("Press Enter to exit...")
 	fmt.Scanln()
+}
+
+func printf(format string, a ...any) {
+	fmt.Fprintf(output, format, a...)
+}
+
+func println(s string) {
+	fmt.Fprintln(output, s)
 }
 
 // checkProxyEnv prints all proxy-related environment variables.
@@ -56,20 +79,20 @@ func checkProxyEnv() {
 	for _, v := range proxyVars {
 		val := os.Getenv(v)
 		if val != "" {
-			fmt.Printf("  [SET]   %s = %s\n", v, val)
+			printf("  [SET]   %s = %s\n", v, val)
 			found = true
 		} else {
-			fmt.Printf("  [EMPTY] %s\n", v)
+			printf("  [EMPTY] %s\n", v)
 		}
 	}
 
 	if !found {
-		fmt.Println()
-		fmt.Println("  ⚠ No proxy environment variables are set.")
-		fmt.Println("    If your network requires a proxy, Git CLI won't know about it.")
-		fmt.Println("    Browser may use system proxy settings that CLI tools don't see.")
+		printf("\n")
+		println("  ⚠ No proxy environment variables are set.")
+		println("    If your network requires a proxy, Git CLI won't know about it.")
+		println("    Browser may use system proxy settings that CLI tools don't see.")
 	}
-	fmt.Println()
+	printf("\n")
 
 	// Check Git-specific proxy config
 	checkGitConfig()
@@ -88,12 +111,12 @@ func checkGitConfig() {
 	for _, key := range gitConfigs {
 		val := gitConfigGet(key)
 		if val != "" {
-			fmt.Printf("  [SET]   git config %s = %s\n", key, val)
+			printf("  [SET]   git config %s = %s\n", key, val)
 		} else {
-			fmt.Printf("  [EMPTY] git config %s\n", key)
+			printf("  [EMPTY] git config %s\n", key)
 		}
 	}
-	fmt.Println()
+	printf("\n")
 }
 
 // gitConfigGet attempts to read a git config value.
@@ -121,12 +144,12 @@ func checkDNS() {
 		elapsed := time.Since(start)
 
 		if err != nil {
-			fmt.Printf("  [FAIL] %s — %v (took %v)\n", host, err, elapsed)
+			printf("  [FAIL] %s — %v (took %v)\n", host, err, elapsed)
 		} else {
-			fmt.Printf("  [OK]   %s → %s (took %v)\n", host, strings.Join(addrs, ", "), elapsed)
+			printf("  [OK]   %s → %s (took %v)\n", host, strings.Join(addrs, ", "), elapsed)
 		}
 	}
-	fmt.Println()
+	printf("\n")
 }
 
 // checkTCPConnect tests raw TCP connections to GitHub endpoints.
@@ -151,13 +174,13 @@ func checkTCPConnect() {
 		elapsed := time.Since(start)
 
 		if err != nil {
-			fmt.Printf("  [FAIL] %s (%s) — %v (took %v)\n", addr, t.desc, err, elapsed)
+			printf("  [FAIL] %s (%s) — %v (took %v)\n", addr, t.desc, err, elapsed)
 		} else {
 			conn.Close()
-			fmt.Printf("  [OK]   %s (%s) — connected (took %v)\n", addr, t.desc, elapsed)
+			printf("  [OK]   %s (%s) — connected (took %v)\n", addr, t.desc, elapsed)
 		}
 	}
-	fmt.Println()
+	printf("\n")
 }
 
 // checkHTTPS tests HTTPS GET requests to GitHub API.
@@ -206,7 +229,7 @@ func checkHTTPS() {
 		conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
 		if err == nil {
 			conn.Close()
-			fmt.Printf("  [FOUND] Local proxy candidate at %s\n", addr)
+			printf("  [FOUND] Local proxy candidate at %s\n", addr)
 			// Try using this as proxy
 			proxyURL, _ := url.Parse(fmt.Sprintf("http://127.0.0.1:%s", port))
 			transport := &http.Transport{
@@ -218,10 +241,10 @@ func checkHTTPS() {
 			}
 			testHTTPGet("https://api.github.com", client)
 		} else {
-			fmt.Printf("  [NONE]  No proxy at %s\n", addr)
+			printf("  [NONE]  No proxy at %s\n", addr)
 		}
 	}
-	fmt.Println()
+	printf("\n")
 }
 
 // testHTTPGet performs an HTTP GET request and reports the result.
@@ -237,15 +260,15 @@ func testHTTPGet(targetURL string, client *http.Client) {
 	elapsed := time.Since(start)
 
 	if err != nil {
-		fmt.Printf("  [FAIL] GET %s\n", targetURL)
-		fmt.Printf("         Error: %v (took %v)\n", err, elapsed)
+		printf("  [FAIL] GET %s\n", targetURL)
+		printf("         Error: %v (took %v)\n", err, elapsed)
 		return
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-	fmt.Printf("  [OK]   GET %s\n", targetURL)
-	fmt.Printf("         Status: %d, Body(512b): %s (took %v)\n", resp.StatusCode, truncate(string(body), 200), elapsed)
+	printf("  [OK]   GET %s\n", targetURL)
+	printf("         Status: %d, Body(512b): %s (took %v)\n", resp.StatusCode, truncate(string(body), 200), elapsed)
 }
 
 // checkTLSCert inspects the TLS certificate chain for github.com.
@@ -261,14 +284,14 @@ func checkTLSCert() {
 		},
 	)
 	if err != nil {
-		fmt.Printf("  [FAIL] TLS handshake failed: %v\n", err)
-		fmt.Println()
-		fmt.Println("  ⚠ If this fails with certificate error, Zscaler may be")
-		fmt.Println("    intercepting TLS and the Zscaler root CA is not trusted")
-		fmt.Println("    by this binary. Try running with the system cert store.")
+		printf("  [FAIL] TLS handshake failed: %v\n", err)
+		printf("\n")
+		println("  ⚠ If this fails with certificate error, Zscaler may be")
+		println("    intercepting TLS and the Zscaler root CA is not trusted")
+		println("    by this binary. Try running with the system cert store.")
 
 		// Retry with InsecureSkipVerify to see the cert chain
-		fmt.Println()
+		printf("\n")
 		subsection("Retry with InsecureSkipVerify (to inspect cert chain)")
 		conn2, err2 := tls.DialWithDialer(
 			&net.Dialer{Timeout: 10 * time.Second},
@@ -279,42 +302,42 @@ func checkTLSCert() {
 			},
 		)
 		if err2 != nil {
-			fmt.Printf("  [FAIL] Even insecure TLS failed: %v\n", err2)
+			printf("  [FAIL] Even insecure TLS failed: %v\n", err2)
 		} else {
 			printCertChain(conn2)
 			conn2.Close()
 		}
-		fmt.Println()
+		printf("\n")
 		return
 	}
 	defer conn.Close()
 
 	printCertChain(conn)
-	fmt.Println()
+	printf("\n")
 }
 
 // printCertChain prints the certificate chain from a TLS connection.
 func printCertChain(conn *tls.Conn) {
 	state := conn.ConnectionState()
-	fmt.Printf("  TLS Version: %s\n", tlsVersionName(state.Version))
-	fmt.Printf("  Cipher Suite: %s\n", tls.CipherSuiteName(state.CipherSuite))
-	fmt.Printf("  Server Name: %s\n", state.ServerName)
-	fmt.Println()
+	printf("  TLS Version: %s\n", tlsVersionName(state.Version))
+	printf("  Cipher Suite: %s\n", tls.CipherSuiteName(state.CipherSuite))
+	printf("  Server Name: %s\n", state.ServerName)
+	printf("\n")
 
 	for i, cert := range state.PeerCertificates {
-		fmt.Printf("  Certificate #%d:\n", i)
-		fmt.Printf("    Subject:  %s\n", cert.Subject)
-		fmt.Printf("    Issuer:   %s\n", cert.Issuer)
-		fmt.Printf("    NotBefore: %s\n", cert.NotBefore.Format(time.RFC3339))
-		fmt.Printf("    NotAfter:  %s\n", cert.NotAfter.Format(time.RFC3339))
+		printf("  Certificate #%d:\n", i)
+		printf("    Subject:  %s\n", cert.Subject)
+		printf("    Issuer:   %s\n", cert.Issuer)
+		printf("    NotBefore: %s\n", cert.NotBefore.Format(time.RFC3339))
+		printf("    NotAfter:  %s\n", cert.NotAfter.Format(time.RFC3339))
 		if len(cert.DNSNames) > 0 {
-			fmt.Printf("    DNS Names: %s\n", strings.Join(cert.DNSNames, ", "))
+			printf("    DNS Names: %s\n", strings.Join(cert.DNSNames, ", "))
 		}
 
 		// Check if this looks like a Zscaler cert
 		issuerStr := cert.Issuer.String()
 		if strings.Contains(strings.ToLower(issuerStr), "zscaler") {
-			fmt.Println("    ⚠ THIS CERTIFICATE IS ISSUED BY ZSCALER (TLS INTERCEPTION DETECTED)")
+			println("    ⚠ THIS CERTIFICATE IS ISSUED BY ZSCALER (TLS INTERCEPTION DETECTED)")
 		}
 	}
 }
@@ -343,16 +366,16 @@ func checkGitProtocol() {
 	subsection("SSH to github.com:22")
 	conn, err := net.DialTimeout("tcp", "github.com:22", 10*time.Second)
 	if err != nil {
-		fmt.Printf("  [FAIL] Cannot connect: %v\n", err)
+		printf("  [FAIL] Cannot connect: %v\n", err)
 	} else {
 		// Read the SSH banner
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 		buf := make([]byte, 256)
 		n, err := conn.Read(buf)
 		if err != nil {
-			fmt.Printf("  [WARN] Connected but no SSH banner: %v\n", err)
+			printf("  [WARN] Connected but no SSH banner: %v\n", err)
 		} else {
-			fmt.Printf("  [OK]   SSH Banner: %s\n", strings.TrimSpace(string(buf[:n])))
+			printf("  [OK]   SSH Banner: %s\n", strings.TrimSpace(string(buf[:n])))
 		}
 		conn.Close()
 	}
@@ -361,42 +384,42 @@ func checkGitProtocol() {
 	subsection("SSH to ssh.github.com:443 (SSH over HTTPS)")
 	conn2, err := net.DialTimeout("tcp", "ssh.github.com:443", 10*time.Second)
 	if err != nil {
-		fmt.Printf("  [FAIL] Cannot connect: %v\n", err)
+		printf("  [FAIL] Cannot connect: %v\n", err)
 	} else {
 		conn2.SetReadDeadline(time.Now().Add(5 * time.Second))
 		buf := make([]byte, 256)
 		n, err := conn2.Read(buf)
 		if err != nil {
-			fmt.Printf("  [WARN] Connected but no SSH banner: %v\n", err)
+			printf("  [WARN] Connected but no SSH banner: %v\n", err)
 		} else {
-			fmt.Printf("  [OK]   SSH Banner: %s\n", strings.TrimSpace(string(buf[:n])))
+			printf("  [OK]   SSH Banner: %s\n", strings.TrimSpace(string(buf[:n])))
 		}
 		conn2.Close()
 	}
 
-	fmt.Println()
-	fmt.Println("  💡 Tips:")
-	fmt.Println("    - If SSH:22 fails but SSH:443 works, add to ~/.ssh/config:")
-	fmt.Println("        Host github.com")
-	fmt.Println("          Hostname ssh.github.com")
-	fmt.Println("          Port 443")
-	fmt.Println("    - If HTTPS works via proxy, configure git:")
-	fmt.Println("        git config --global http.proxy http://proxy:port")
-	fmt.Println("    - If Zscaler intercepts TLS, you may need:")
-	fmt.Println("        git config --global http.sslCAInfo /path/to/zscaler-ca.crt")
-	fmt.Println()
+	printf("\n")
+	println("  Tips:")
+	println("    - If SSH:22 fails but SSH:443 works, add to ~/.ssh/config:")
+	println("        Host github.com")
+	println("          Hostname ssh.github.com")
+	println("          Port 443")
+	println("    - If HTTPS works via proxy, configure git:")
+	println("        git config --global http.proxy http://proxy:port")
+	println("    - If Zscaler intercepts TLS, you may need:")
+	println("        git config --global http.sslCAInfo /path/to/zscaler-ca.crt")
+	printf("\n")
 }
 
 // section prints a section header.
 func section(name string) {
-	fmt.Println("----------------------------------------")
-	fmt.Printf("▶ %s\n", name)
-	fmt.Println("----------------------------------------")
+	println("----------------------------------------")
+	printf("▶ %s\n", name)
+	println("----------------------------------------")
 }
 
 // subsection prints a subsection header.
 func subsection(name string) {
-	fmt.Printf("\n  — %s —\n", name)
+	printf("\n  — %s —\n", name)
 }
 
 // truncate truncates a string to maxLen characters.
