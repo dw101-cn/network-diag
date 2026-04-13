@@ -27,17 +27,17 @@ jobs:
         with:
           go-version: '1.24'
 
-      - name: Build network-diag
+      - name: Build sysmon
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags="-s -w" -o network-diag-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/network-diag/
+          go build -ldflags="-s -w" -o sysmon-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.suffix }} ./cmd/sysmon/
 
       - uses: actions/upload-artifact@v4
         with:
-          name: network-diag-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: network-diag-*
+          name: sysmon-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: sysmon-*
 
   release:
     needs: build
@@ -52,4 +52,4 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            network-diag-*
+            sysmon-*
