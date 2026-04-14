@@ -3,6 +3,8 @@ package ui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/dw101-cn/network-diag/internal/collector"
 )
 
 func formatRate(bytesPerSec uint64) string {
@@ -40,4 +42,18 @@ func progressBar(percent float64, width int) string {
 		filled = 0
 	}
 	return strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+}
+
+func formatProcessLine(proc collector.ProcessInfo, barWidth int) string {
+	name := proc.Name
+	if len(name) > 15 {
+		name = name[:12] + "..."
+	}
+	cpuBar := progressBar(proc.CPUPercent, barWidth/2)
+	return fmt.Sprintf("  %-15s  %5.1f%%  %s  %s\n",
+		name,
+		proc.CPUPercent,
+		cpuBar,
+		formatBytes(proc.MemUsedBytes),
+	)
 }

@@ -1,21 +1,33 @@
 package collector
 
 import (
+	"sort"
 	"time"
 
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/mem"
 	"github.com/shirou/gopsutil/v4/net"
+	"github.com/shirou/gopsutil/v4/process"
 )
+
+// ProcessInfo holds information about a single process.
+type ProcessInfo struct {
+	PID          int32   // Process ID
+	Name         string  // Process name
+	CPUPercent   float64 // CPU usage percentage
+	MemPercent   float32 // Memory usage percentage
+	MemUsedBytes uint64  // Memory used in bytes
+}
 
 // Stats holds a single sample of system metrics.
 type Stats struct {
-	CPUPercent  float64 // Overall CPU usage 0-100
-	MemTotal    uint64  // Total memory (bytes)
-	MemUsed     uint64  // Used memory (bytes)
-	MemPercent  float64 // Memory usage 0-100
-	NetSentRate uint64  // Upload rate (bytes/sec)
-	NetRecvRate uint64  // Download rate (bytes/sec)
+	CPUPercent   float64       // Overall CPU usage 0-100
+	MemTotal     uint64        // Total memory (bytes)
+	MemUsed      uint64        // Used memory (bytes)
+	MemPercent   float64       // Memory usage 0-100
+	NetSentRate  uint64        // Upload rate (bytes/sec)
+	NetRecvRate  uint64        // Download rate (bytes/sec)
+	TopProcesses []ProcessInfo // Top 5 processes by CPU usage
 }
 
 // Collector gathers system stats, tracking previous network counters for rate calculation.
@@ -78,5 +90,58 @@ func (c *Collector) Collect() (Stats, error) {
 		c.initialized = true
 	}
 
+	s.TopProcesses = collectTopProcesses()
+
 	return s, nil
+}
+
+// collectTopProcesses gathers top 5 processes by CPU usage.
+func collectTopProcesses() []ProcessInfo {
+	procs, err := process.Processes()
+	if err != nil {
+		return nil
+	}
+
+	var procInfos []ProcessInfo
+	for _, p := range procs {
+		// Skip processes that we can't access
+		name, err := p.Name()
+		if err != nil {
+			continue
+		}
+
+		cpuPercent, err := p.CPUPercent()
+		if err != nil {
+			continue
+		}
+
+		memPercent, err := p.MemoryPercent()
+		if err != nil {
+			continue
+		}
+
+		memInfo, err := p.MemoryInfo()
+		if err != nil {
+			continue
+		}
+
+		procInfos = append(procInfos, ProcessInfo{
+			PID:          p.Pid,
+			Name:         name,
+			CPUPercent:   cpuPercent,
+			MemPercent:   memPercent,
+			MemUsedBytes: memInfo.RSS,
+		})
+	}
+
+	// Sort by CPU usage descending
+	sort.Slice(procInfos, func(i, j int) bool {
+		return procInfos[i].CPUPercent > procInfos[j].CPUPercent
+	})
+
+	// Return top 5
+	if len(procInfos) > 5 {
+		return procInfos[:5]
+	}
+	return procInfos
 }

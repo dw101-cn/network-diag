@@ -117,6 +117,14 @@ func (m Model) View() string {
 		cpuBar,
 	)
 
+	var processLines string
+	if len(s.TopProcesses) > 0 {
+		processLines = "\n" + titleStyle.Render("Top Processes") + "\n"
+		for _, proc := range s.TopProcesses {
+			processLines += formatProcessLine(proc, barWidth)
+		}
+	}
+
 	memLine := fmt.Sprintf("%s  %s / %s  (%.1f%%)",
 		labelStyle.Render("MEM"),
 		formatBytes(s.MemUsed),
@@ -140,8 +148,8 @@ func (m Model) View() string {
 
 	hint := hintStyle.Render("Press q to quit")
 
-	content := fmt.Sprintf("%s\n\n%s\n%s\n%s\n%s\n\n%s",
-		title, cpuLine, memLine, memBarLine, netLine, hint)
+	content := fmt.Sprintf("%s\n\n%s\n%s\n%s\n%s\n%s\n\n%s",
+		title, cpuLine, memLine, memBarLine, netLine, processLines, hint)
 
 	if m.err != nil {
 		errMsg := lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(
